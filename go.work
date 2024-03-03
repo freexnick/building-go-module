@@ -3,6 +3,7 @@ go 1.21.6
 use (
 	./app
 	./app-dir
+	./app-download
 	./app-slug
 	./app-upload
 	./toolkit

@@ -1,6 +1,7 @@
 package toolkit
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	"image/png"
@@ -155,4 +156,43 @@ func TestTools_CreateDirIfNotExist(t *testing.T) {
 		t.Error(err)
 	}
 	_ = os.Remove(path)
+}
+
+var jsonTests = []struct {
+	name          string
+	json          string
+	errorExpected bool
+	maxSize       uint
+	allowUnkown   bool
+}{
+	{name: "good json", json: `{"foo":"bar"}`, errorExpected: false, maxSize: 1024, allowUnkown: false},
+}
+
+func TestTools_ReadJSON(t *testing.T) {
+	var testTools Tools
+
+	for _, e := range jsonTests {
+		testTools.MaxJSONSize = e.maxSize
+		testTools.AllowedUnknownFields = e.allowUnkown
+
+		var decodeJSON struct {
+			Foo string `json:"foo"`
+		}
+
+		req := httptest.NewRequest("POST", "/", bytes.NewReader([]byte(e.json)))
+
+		rr := httptest.NewRecorder()
+
+		err := testTools.ReadJSON(rr, req, &decodeJSON)
+
+		if e.errorExpected && err == nil {
+			t.Errorf("%s: error expected, but not received", e.name)
+		}
+
+		if !e.errorExpected && err != nil {
+			t.Errorf("%s: error not expected, but one received: %s", e.name, err.Error())
+		}
+
+		req.Body.Close()
+	}
 }

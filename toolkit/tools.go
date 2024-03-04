@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -17,10 +16,10 @@ import (
 const randomStringSource = "abcdefghiklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+"
 
 type Tools struct {
-	MaxFileSize          uint64 `default:"5 << 20"`
-	AllowedFileTypes     []string
-	MaxJSONSize          uint `default:"2 << 20"`
-	AllowedUnknownFields bool
+	MaxFileSize        uint64 `default:"5 << 20"`
+	AllowedFileTypes   []string
+	MaxJSONSize        uint `default:"2 << 20"`
+	AllowUnknownFields bool
 }
 
 func (t *Tools) RandomString(n int) string {
@@ -171,13 +170,6 @@ func (t *Tools) Slugify(s string) (string, error) {
 	return slug, nil
 }
 
-func (t *Tools) DownloadStaticFile(w http.ResponseWriter, r *http.Request, p, file, displayName string) {
-	fp := path.Join(p, file)
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment;filename=\"%s\"", displayName))
-
-	http.ServeFile(w, r, fp)
-}
-
 type JSONResponse struct {
 	Error   bool        `json:"error"`
 	Message string      `json:"message"`
@@ -189,7 +181,7 @@ func (t *Tools) ReadJSON(w http.ResponseWriter, r *http.Request, data interface{
 
 	dec := json.NewDecoder(r.Body)
 
-	if !t.AllowedUnknownFields {
+	if !t.AllowUnknownFields {
 		dec.DisallowUnknownFields()
 	}
 
@@ -201,33 +193,60 @@ func (t *Tools) ReadJSON(w http.ResponseWriter, r *http.Request, data interface{
 
 		switch {
 		case errors.As(err, &syntaxError):
-			return fmt.Errorf("badly-formed JSON at %d", syntaxError.Offset)
+			return fmt.Errorf("body contains badly-formed JSON (at character %d)", syntaxError.Offset)
+
 		case errors.Is(err, io.ErrUnexpectedEOF):
-			return errors.New("body contains badly-formed json")
+			return errors.New("body contains badly-formed JSON")
+
 		case errors.As(err, &unmarshalTypeError):
 			if unmarshalTypeError.Field != "" {
 				return fmt.Errorf("body contains incorrect JSON type for field %q", unmarshalTypeError.Field)
 			}
-			return fmt.Errorf("body contains incorrect JSON type at %d", unmarshalTypeError.Offset)
-		case errors.As(err, &invalidUnmarshalError):
-			return fmt.Errorf("error unmarshaling JSON: %s", err.Error())
+			return fmt.Errorf("body contains incorrect JSON type (at character %d)", unmarshalTypeError.Offset)
+
 		case errors.Is(err, io.EOF):
 			return errors.New("body must not be empty")
+
 		case strings.HasPrefix(err.Error(), "json: unknown field"):
 			fieldName := strings.TrimPrefix(err.Error(), "json: unknown field")
 			return fmt.Errorf("body contains unknown key %s", fieldName)
+
 		case err.Error() == "http: request body too large":
 			return fmt.Errorf("body must not be larger than %d bytes", t.MaxJSONSize)
+
+		case errors.As(err, &invalidUnmarshalError):
+			return fmt.Errorf("error unmarshalling JSON: %s", err.Error())
+
 		default:
 			return err
 		}
-
 	}
 
 	err = dec.Decode(&struct{}{})
-	if err != nil {
+	if err != io.EOF {
 		return errors.New("body must contain only one JSON value")
 	}
 
+	return nil
+}
+
+func (t *Tools) WriteJSON(w http.ResponseWriter, status int, data interface{}, headers ...http.Header) error {
+	out, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	if len(headers) > 0 {
+		for key, value := range headers[0] {
+			w.Header()[key] = value
+		}
+
+		w.Header().Set("Content-Type", "applicaton/json")
+		w.WriteHeader(status)
+		_, err := w.Write(out)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }

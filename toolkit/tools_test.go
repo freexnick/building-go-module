@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"io"
 	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"sync"
@@ -163,30 +164,43 @@ var jsonTests = []struct {
 	json          string
 	errorExpected bool
 	maxSize       uint
-	allowUnkown   bool
+	allowUnknown  bool
 }{
-	{name: "good json", json: `{"foo":"bar"}`, errorExpected: false, maxSize: 1024, allowUnkown: false},
+	{name: "good json", json: `{"foo": "bar"}`, errorExpected: false, maxSize: 1024, allowUnknown: false},
+	{name: "badly formatted json", json: `{"foo":}`, errorExpected: true, maxSize: 1024, allowUnknown: false},
+	{name: "incorrect type", json: `{"foo": 1}`, errorExpected: true, maxSize: 1024, allowUnknown: false},
+	{name: "two json files", json: `{"foo": "1"}{"alpha": "beta"}`, errorExpected: true, maxSize: 1024, allowUnknown: false},
+	{name: "empty body", json: ``, errorExpected: true, maxSize: 1024, allowUnknown: false},
+	{name: "syntax error in json", json: `{"foo": 1"`, errorExpected: true, maxSize: 1024, allowUnknown: false},
+	{name: "unknown field in json", json: `{"fooo": "1"}`, errorExpected: true, maxSize: 1024, allowUnknown: false},
+	{name: "allow unknown fields in json", json: `{"fooo": "1"}`, errorExpected: false, maxSize: 1024, allowUnknown: true},
+	{name: "missing field name", json: `{jack: "1"}`, errorExpected: true, maxSize: 1024, allowUnknown: true},
+	{name: "file too large", json: `{"foo": "bar"}`, errorExpected: true, maxSize: 5, allowUnknown: true},
+	{name: "not json", json: `Hello, world!`, errorExpected: true, maxSize: 1024, allowUnknown: true},
 }
 
 func TestTools_ReadJSON(t *testing.T) {
-	var testTools Tools
+	var testTool Tools
 
 	for _, e := range jsonTests {
-		testTools.MaxJSONSize = e.maxSize
-		testTools.AllowedUnknownFields = e.allowUnkown
+		testTool.MaxJSONSize = e.maxSize
+		testTool.AllowUnknownFields = e.allowUnknown
 
-		var decodeJSON struct {
+		var decodedJSON struct {
 			Foo string `json:"foo"`
 		}
 
-		req := httptest.NewRequest("POST", "/", bytes.NewReader([]byte(e.json)))
+		req, err := http.NewRequest("POST", "/", bytes.NewReader([]byte(e.json)))
+		if err != nil {
+			t.Log("Error:", err)
+		}
 
 		rr := httptest.NewRecorder()
 
-		err := testTools.ReadJSON(rr, req, &decodeJSON)
+		err = testTool.ReadJSON(rr, req, &decodedJSON)
 
 		if e.errorExpected && err == nil {
-			t.Errorf("%s: error expected, but not received", e.name)
+			t.Errorf("%s: error expected, but none received", e.name)
 		}
 
 		if !e.errorExpected && err != nil {
@@ -194,5 +208,23 @@ func TestTools_ReadJSON(t *testing.T) {
 		}
 
 		req.Body.Close()
+	}
+}
+
+func TestTools_WriteJson(t *testing.T) {
+	var testoTools Tools
+
+	rr := httptest.NewRecorder()
+	payload := JSONResponse{
+		Error:   false,
+		Message: "foo",
+	}
+
+	headers := make(http.Header)
+	headers.Add("FOO", "BAR")
+
+	err := testoTools.WriteJSON(rr, http.StatusOK, payload, headers)
+	if err != nil {
+		t.Errorf("failed to write JSON: %v", err)
 	}
 }
